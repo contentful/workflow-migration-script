@@ -1,0 +1,23 @@
+{
+  "name": "workflow-migration-script",
+  "version": "1.0.0",
+  "description": "Migrate entries from deprecated workflows in Launch to the new workflow app",
+  "type": "module",
+  "scripts": {},
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/contentful/workflow-migration-script.git"
+  },
+  "author": "Contentful GmbH",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/contentful/workflow-migration-script/issues"
+  },
+  "homepage": "https://github.com/contentful/workflow-migration-script#readme",
+  "dependencies": {
+    "boxen": "^7.0.0",
+    "chalk": "^5.0.1",
+    "commander": "^9.3.0",
+    "contentful-management": "^10.8.0"
+  }
+}
