@@ -6,12 +6,15 @@ import { program } from 'commander'
 import chalk from 'chalk'
 import boxen from 'boxen'
 import cfManagement from 'contentful-management';
+import inquirer from 'inquirer';
 
 const { createClient } = cfManagement;
 const INDENT = ' '
 const DOT = '•'
 const CHECK = '✓'
 const CROSS = '✗'
+
+const SLEEP_MS = 100
 
 const ALPHA_HEADERS =  {
     ["x-contentful-enable-alpha-feature"]: 'workflow-management-api',
@@ -122,6 +125,9 @@ if (!tags?.items) {
     process.exit(6)
 }
 
+// ------------------------- MIGRATION BELOW
+
+
 const tagIdToNameMap = tags.items.reduce((carry, tag) => {
     carry[tag.sys.id] = tag.name;
     return carry;
@@ -134,12 +140,22 @@ const tagNameToIdMap = Object.fromEntries(Object.entries(tagIdToNameMap).map(a =
  * - including clean up
  */
 async function processEntriesInBatch(tagId, stepId, workflowDefinition, totalItems, totalItemsProcessed) {
-    // ToDo: built in timeout/sleep
     totalItemsProcessed = totalItemsProcessed ?? 0;
     
     const entries = await client.entry.getMany({ query: {'metadata.tags.sys.id[in]': tagId }, limit: 100, skip: totalItemsProcessed })
     if (totalItemsProcessed === 0) {
         info(`${entries.total} entries found`, 6)
+        const { shouldStartMigration } = await inquirer.prompt({
+            type: 'confirm',
+            name: 'shouldStartMigration',
+            default: false,
+            message: `${INDENT.repeat(6)}Please confirm migrating entries with tag '${tagId}'`
+        })
+
+        if (!shouldStartMigration) {
+            info(`aborted migration for tag '${tagId}'`, 6)
+            return;
+        }
         totalItems = entries.total
     }
 
@@ -148,13 +164,15 @@ async function processEntriesInBatch(tagId, stepId, workflowDefinition, totalIte
     }
 
     for (const entry of entries.items) {
+        await new Promise(r => setTimeout(r, SLEEP_MS)); // mitigate rate limit
+        
         ++totalItemsProcessed
         if (!workflowDefinition.enabledContentTypes.includes(entry.sys.contentType.sys.id)) {
             warning(`${CROSS} ${entry.sys.id} - Entry content type '${entry.sys.contentType.sys.id}' not configured for worklfow '${workflowDefinition.sys.id}'`, 6)
             continue;
         }
-
         if (!dryRun) {
+            // start new workflow
             try {
                 await client.workflow.create({}, {
                     entity: {
@@ -175,8 +193,13 @@ async function processEntriesInBatch(tagId, stepId, workflowDefinition, totalIte
             }
         }
         
+        // remove tag
         if (!dryRun && shouldCleanUpTags) {
-            //await client.entry.patch({}, []) // ToDo: add patch object
+            await client.entry.patch({}, [{
+                op: "replace",
+                path: "/metadata/tags",
+                value: entry.metadata.tags.filter(t => t.sys.id !== tagId)
+            }])
         }
         
         success(entry.sys.id, 6)
