@@ -14,8 +14,7 @@ const DOT = '•'
 const CHECK = '✓'
 const CROSS = '✗'
 
-const SLEEP_MS = 100
-
+const SLEEP_MS = 200
 const ALPHA_HEADERS =  {
     ["x-contentful-enable-alpha-feature"]: 'workflow-management-api',
 };
@@ -34,14 +33,22 @@ const action = (m, i) => info(`${DOT} ${m}`, i); // Orange color
 program
     .name('workflow-migrator')
     .description('CLI to migrate entries from the deprecated workflow in launch to the new workflow feature.')
-    .requiredOption('--config <path-to-config-file>', 'A Config file to use for migration. See README for valid options')
-    .option('--removeTagFromEntry', 'Providing this option will remove the deprecated workflow tag from the entries')
-    .option('--dryRun', 'Do not perform any write action', true)
+    .requiredOption('--config <path-to-config-file>', 'A Config file to use for migration. See README for valid options.')
+    .option('--cleanUpTags', 'Providing this option will remove the deprecated workflow tag from the entries after migration.')
+    .option('--noDryRun', 'If this flag is provided, actual write action will be executed.')
+    .option('--debounce <milliseconds>', 'Milliseconds to wait between processing each entry to prevent rate limiting.', SLEEP_MS)
     .version('1.0.0');
 
 program.parse();
+const { config: configFilePath, cleanUpTags: shouldCleanUpTags, noDryRun, debounce: debounceMs } = program.opts();
+const dryRun = !(noDryRun ?? false);
 
-const { config: configFilePath, removeTagFromEntry: shouldCleanUpTags, dryRun } = program.opts();
+//------------------------
+
+if (dryRun) {
+    warning('Executing script in dry run mode. Provide a "--noDryRun" flag to perform migration.')
+    log()
+}
 
 action('read config file')
 // ToDo: resolve relative paths
@@ -84,6 +91,9 @@ try {
 } catch (e) {
     error("Error creating client. Please check your config")
 }
+
+// ToDo: check environment alias
+
 success("Client created", 2)
 log()
 
@@ -109,10 +119,12 @@ if (!workflowDefinitions || workflowDefinitions.length === 0) {
     process.exit(5)
 }
 
-const workflowDefinitionIdMap = workflowDefinitions.items.reduce((carry, { sys, steps, appliesTo }) => {
+const workflowDefinitionIdMap = workflowDefinitions.items.reduce((carry, { sys, name, steps, appliesTo }) => {
     carry[sys.id] = {
         sys,
+        name,
         stepIds: steps.map((s) => s.id),
+        steps: steps.reduce((c, s) => {c[s.id] = s; return c}, {}),
         enabledContentTypes: appliesTo.map( a => a.validations.map(v => v.linkContentType).flat()).flat()
     };
 
@@ -126,8 +138,6 @@ if (!tags?.items) {
 }
 
 // ------------------------- MIGRATION BELOW
-
-
 const tagIdToNameMap = tags.items.reduce((carry, tag) => {
     carry[tag.sys.id] = tag.name;
     return carry;
@@ -139,23 +149,40 @@ const tagNameToIdMap = Object.fromEntries(Object.entries(tagIdToNameMap).map(a =
  * - in batches
  * - including clean up
  */
-async function processEntriesInBatch(tagId, stepId, workflowDefinition, totalItems, totalItemsProcessed) {
+async function processEntriesInBatch(tagId, tagName, stepId, workflowDefinition, shouldRemoveTagsFromEntries, totalItems, totalItemsProcessed) {
     totalItemsProcessed = totalItemsProcessed ?? 0;
     
     const entries = await client.entry.getMany({ query: {'metadata.tags.sys.id[in]': tagId }, limit: 100, skip: totalItemsProcessed })
     if (totalItemsProcessed === 0) {
-        info(`${entries.total} entries found`, 6)
+        log('')
+        info(`Will start migrating:`, 6)
+        info(`- ${entries.total} entries`, 8)
+        info(`- from tag "${chalk.underline(tagName)}" with id "${tagId}"`, 8)
+        info(`- to "${chalk.underline(workflowDefinition.steps[stepId].name)}" of workflow "${chalk.italic(workflowDefinition.name)}"`, 8)
+
         const { shouldStartMigration } = await inquirer.prompt({
             type: 'confirm',
             name: 'shouldStartMigration',
             default: false,
-            message: `${INDENT.repeat(6)}Please confirm migrating entries with tag '${tagId}'`
+            message: `${INDENT.repeat(6)}Should start migrating entries?`
         })
 
         if (!shouldStartMigration) {
             info(`aborted migration for tag '${tagId}'`, 6)
             return;
         }
+
+        shouldRemoveTagsFromEntries = shouldRemoveTagsFromEntries ?? shouldCleanUpTags
+        if (shouldRemoveTagsFromEntries === undefined) {
+            const answerRemoveTagMapping = await inquirer.prompt({
+                type: 'confirm',
+                name: 'shouldRemoveTagsFromEntries',
+                default: false,
+                message: `${INDENT.repeat(6)}Do you want to remove the tag from entries after migration?`
+            })
+            shouldRemoveTagsFromEntries = answerRemoveTagMapping.shouldRemoveTagsFromEntries;
+        }
+
         totalItems = entries.total
     }
 
@@ -164,7 +191,7 @@ async function processEntriesInBatch(tagId, stepId, workflowDefinition, totalIte
     }
 
     for (const entry of entries.items) {
-        await new Promise(r => setTimeout(r, SLEEP_MS)); // mitigate rate limit
+        await new Promise(r => setTimeout(r, debounceMs)); // mitigate rate limit
         
         ++totalItemsProcessed
         if (!workflowDefinition.enabledContentTypes.includes(entry.sys.contentType.sys.id)) {
@@ -194,7 +221,7 @@ async function processEntriesInBatch(tagId, stepId, workflowDefinition, totalIte
         }
         
         // remove tag
-        if (!dryRun && shouldCleanUpTags) {
+        if (!dryRun && shouldRemoveTagsFromEntries) {
             await client.entry.patch({}, [{
                 op: "replace",
                 path: "/metadata/tags",
@@ -206,7 +233,7 @@ async function processEntriesInBatch(tagId, stepId, workflowDefinition, totalIte
     }
 
     if (totalItems > totalItemsProcessed) {
-       await processEntriesInBatch(tagId, stepId, workflowDefinition, totalItems, totalItemsProcessed)
+       await processEntriesInBatch(tagId, tagName, stepId, workflowDefinition, shouldRemoveTagsFromEntries, totalItems, totalItemsProcessed)
     }
 }
 
@@ -241,8 +268,10 @@ for (const [oldTag, newWorkflow] of oldWorkflowTags) {
         }
         
         info('fetch entries', 4)
-        await processEntriesInBatch(tagId, newWorkflow.workflowDefinitionStepId, workflowDefinition)
-        success('migrated', 2)
+        await processEntriesInBatch(tagId, tagIdToNameMap[tagId], newWorkflow.workflowDefinitionStepId, workflowDefinition)
+
+        // ToDo: shouldCleanUpTags -> remove tag from environment
+        success('migration completed', 2)
     } catch (e) {
         error(`Error migrating ${oldTag}: ${e.message ?? 'Unknown Error'}`)
     }
