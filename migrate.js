@@ -7,6 +7,7 @@ import inquirer from 'inquirer';
 import { processEntriesInBatch } from './models/migrate-workflow-v1-entries.js'
 import { logBox, warning, error, log, info, action, success, INDENT, bold } from './libs/cli-utils.js';
 import { readJsonFileSync } from './libs/files.js';
+import { resolveToAbsolutePath } from './libs/paths.js';
 
 const { createClient } = cfManagement;
 
@@ -37,9 +38,7 @@ if (dryRun) {
 }
 
 action('read config file')
-
-// ToDo: resolve relative paths
-let config = readJsonFileSync(configFilePath, (e) => {
+let config = readJsonFileSync(resolveToAbsolutePath(configFilePath), (e) => {
     error(`Unable to read json config file. Reason: ${e.message ?? 'Unknown error'}`, 2)
     process.exit(1)
 });
@@ -54,7 +53,7 @@ if (notDefinedConfig.length > 0) {
 success("Config loaded", 2)
 log()
 
-const { spaceId, environmentId , accessToken, tags: tagsToMigrate } = config;
+const { spaceId, environmentId , accessToken, tags: tagsFromConfig } = config;
 
 action('creating contentful cmaClient')
 const cmaClient = createClient({ accessToken }, {
@@ -63,26 +62,55 @@ const cmaClient = createClient({ accessToken }, {
     defaults: { spaceId, environmentId },
 })
 
-let environment;
 try {
-    environment = await cmaClient.environment.get()
+    await cmaClient.environment.get()
 } catch (e) {
-    error("Error creating cmaClient. Please check your config")
-    process.exit(3)
+    error(`Error creating cmaClient. Please check your config. Reason: ${e.message}`)
+    process.exit(2)
 }
-
-// ToDo: check environment alias
 
 success("cma client created", 2)
 log()
 
+let tagsToMigrate = [];
+if (tagsFromConfig) {
+    action('loading tags from config')
+    if (tagsFromConfig.length < 1 || tagsFromConfig.filter(t => typeof t !== 'string').length > 0) {
+        error('Config for tags is invalid. Please provide a tag list as strings.', 2)
+        process.exit(3)
+    }
+
+    tagsToMigrate = tagsFromConfig
+    success('loaded', 2)
+}
+
+// load app installation config
+if (!tagsFromConfig) {
+    action('loading workflows v1 configured tags')
+    try {
+        const { parameters } = await cmaClient.appInstallation.get({ appDefinitionId: '6RKxbgPghdY4llDpwCFvgR' })
+        if (!parameters?.workflowDefinitions?.workflow?.states) {
+            throw new Error('No workflow v1 configured for environment.')
+        }
+
+        tagsToMigrate = parameters.workflowDefinitions.workflow.states;
+
+        for (const tagId of tagsToMigrate) {
+            info(`"${parameters.workflowStates[tagId]?.name ?? '(tag not found)'}" id: ${tagId}`, 3)
+        }
+    } catch (e) {
+        error(`Error fetching workflow v1 config. Reason: ${e.message}`, 2)
+        process.exit(3)
+    }
+
+    log()
+    success('loaded', 2)
+}
+
+log()
 info(`start migration`)
 info(`---------------`)
 log()
-if (tagsToMigrate && (tagsToMigrate.length < 1 || tagsToMigrate.filter(t => typeof t !== 'string').length > 0)) {
-    error('Config for tags is invalid. Please provide a tag list as strings.', 2)
-    process.exit(3)
-}
 
 let workflowDefinitions;
 try {
@@ -110,23 +138,15 @@ const workflowDefinitionIdMap = workflowDefinitions.items.reduce((carry, { sys, 
     return carry;
 }, {})
 
-const tags = await cmaClient.tag.getMany({ limit: 500 })
-if (!tags?.items) {
+const allTags = await cmaClient.tag.getMany({ limit: 500 })
+if (!allTags?.items) {
     error(`No tags found for the conifgured environment with id '${environmentId}'`);
     process.exit(6)
 }
 
-//ToDo: if no tags provided, check app installation
-if (!tagsToMigrate) {
-    // if no tags are provided, fetch app installation of workflow, get config
-    // if config is empty, throw error
-}
-
-const oldWorkflowTags = tagsToMigrate ?? [];
-
-
 // ------------------------- MIGRATION BELOW
-const tagIdToNameMap = tags.items.reduce((carry, tag) => {
+const oldWorkflowTags = tagsToMigrate ?? [];
+const tagIdToNameMap = allTags.items.reduce((carry, tag) => {
     carry[tag.sys.id] = tag.name;
     return carry;
 }, {})
