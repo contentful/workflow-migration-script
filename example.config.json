@@ -2,11 +2,5 @@
     "accessToken": "<your-token>",
     "spaceId": "<id of the space>",
     "environmentId": "<id of the environment>",
-    "organizationId": "<id of the org>",
-    "migrationMap": {
-        "old-workflow-tag-name": {
-            "workflowDefinitionId": "<id of the target workflow>",
-            "workflowDefinitionStepId": "<id of the workflow definition step>"
-        }
-    }
+    "tags": ["<tag 1 id>", "<tag 2 id>"]
 }
