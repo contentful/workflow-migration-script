@@ -18,3 +18,5 @@ export const action = (m, i) => info(`${DOT} ${m}`, i);
 export const logBox = (s) => console.log(boxen(s, { padding: 0.5, margin: { top: 0.5, left: 0.5, right: 0.5, bottom: 1 }, dimBorder: true }));
 
 export const bold = (message) => chalk.bold(message)
+
+export const sleep = (milliseconds) => new Promise(r => setTimeout(r, milliseconds));

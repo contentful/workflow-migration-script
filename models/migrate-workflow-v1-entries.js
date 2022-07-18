@@ -1,6 +1,7 @@
 import inquirer from 'inquirer';
 import chalk from 'chalk'
-import { warning, error, log, info, INDENT, CROSS } from '../libs/cli-utils.js';
+import { warning, error, success, log, info, INDENT, CROSS, sleep } from '../libs/cli-utils.js';
+import { ALPHA_HEADERS } from '../constants.js';
 
 /**
  * Mirgate entries from deprecated workflow to new workflow feature
@@ -28,6 +29,11 @@ export async function processEntriesInBatch(args) {
     totalItemsProcessed = totalItemsProcessed ?? 0;
     
     const entries = await cmaClient.entry.getMany({ query: {'metadata.tags.sys.id[in]': tagId }, limit: batchSize ?? 100, skip: totalItemsProcessed })
+    if (entries.items.length === 0) {
+        info(`No entries found.`, 6)
+        return { canDeleteTag: true };
+    }
+
     if (totalItemsProcessed === 0) {
         log('')
         info(`Will start migrating:`, 6)
@@ -44,7 +50,7 @@ export async function processEntriesInBatch(args) {
 
         if (!shouldStartMigration) {
             info(`aborted migration for tag '${tagId}'`, 6)
-            return;
+            return { canDeleteTag: false };
         }
 
         shouldRemoveTagsFromEntries = shouldRemoveTagsFromEntries ?? shouldCleanUpTags
@@ -61,12 +67,8 @@ export async function processEntriesInBatch(args) {
         totalItems = entries.total
     }
 
-    if (entries.items.length === 0) {
-        return;
-    }
-
     for (const entry of entries.items) {
-        await new Promise(r => setTimeout(r, debounceMs)); // mitigate rate limit
+        await sleep(debounceMs)
         
         ++totalItemsProcessed
         if (!workflowDefinition.enabledContentTypes.includes(entry.sys.contentType.sys.id)) {
@@ -78,36 +80,56 @@ export async function processEntriesInBatch(args) {
             try {
                 await cmaClient.workflow.create({}, {
                     entity: {
-                        type: 'Link',
-                        linkType: 'Entry',
-                        id: entry.sys.id
+                        sys: {
+                            type: 'Link',
+                            linkType: 'Entry',
+                            id: entry.sys.id
+                        }
                     },
                     workflowDefinition: {
-                        type: 'Link',
-                        linkType: 'Workflow',
-                        id: workflowDefinition.sys.id
+                        sys: {
+                            type: 'Link',
+                            linkType: 'WorkflowDefinition',
+                            id: workflowDefinition.sys.id
+                        }
                     },
                     stepId
                 }, ALPHA_HEADERS);
+                success(`${entry.sys.id} - workflow created` , 6)
             } catch (e) {
-                error(`${CROSS} ${entry.sys.id} - could not create workflow for entry. Reason ${e.message ?? 'Unknown'}`, 6)
-                continue
+                if (e.message.includes('an active workflow already exists')) {
+                    warning(`${CROSS} ${entry.sys.id} - A workflow already exists for this entry`, 6)
+                } else {
+                    error(`${CROSS} ${entry.sys.id} - could not create workflow for entry. Reason ${e.message ?? 'Unknown'}`, 6)
+                    continue
+                }
             }
         }
         
         // remove tag
         if (!dryRun && shouldRemoveTagsFromEntries) {
-            await cmaClient.entry.patch({}, [{
-                op: "replace",
-                path: "/metadata/tags",
-                value: entry.metadata.tags.filter(t => t.sys.id !== tagId)
-            }])
+            try {
+                const currentEntry = await cmaClient.entry.get({ entryId: entry.sys.id }) // refetch for version
+                await cmaClient.entry.patch({
+                    entryId: entry.sys.id,
+                }, [{
+                    op: "replace",
+                    path: "/metadata/tags",
+                    value: entry.metadata.tags.filter(t => t.sys.id !== tagId)
+                }], {
+                    ['X-Contentful-Version']: currentEntry.sys.version,
+                })
+                success(`${entry.sys.id} - tag removed` , 6)
+            } catch (e) {
+                error(`${CROSS}${entry.sys.id} - could not remove tag from entry. Reason ${e.message ?? 'Unknown'}`, 6)
+                continue;
+            }
         }
-        
-        success(entry.sys.id, 6)
     }
 
     if (totalItems > totalItemsProcessed) {
        await processEntriesInBatch({ ...args, shouldRemoveTagsFromEntries, totalItems, totalItemsProcessed})
     }
+
+    return { canDeleteTag: shouldRemoveTagsFromEntries} ;
 }

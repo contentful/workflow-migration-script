@@ -5,16 +5,13 @@ import { program } from 'commander'
 import cfManagement from 'contentful-management';
 import inquirer from 'inquirer';
 import { processEntriesInBatch } from './models/migrate-workflow-v1-entries.js'
-import { logBox, warning, error, log, info, action, success, INDENT, bold } from './libs/cli-utils.js';
+import { inquireDeleteTag } from './models/delete-tag.js'
+import { logBox, warning, error, log, info, action, success, INDENT, bold, CROSS } from './libs/cli-utils.js';
 import { readJsonFileSync } from './libs/files.js';
 import { resolveToAbsolutePath } from './libs/paths.js';
+import { ALPHA_HEADERS, DEFAULT_BOUNCE_MS } from './constants.js';
 
 const { createClient } = cfManagement;
-
-const SLEEP_MS = 200
-const ALPHA_HEADERS =  {
-    ["x-contentful-enable-alpha-feature"]: 'workflow-management-api',
-};
 
 logBox('Contentful - Workflow Migrator')
 
@@ -24,7 +21,7 @@ program
     .requiredOption('--config <path-to-config-file>', 'A Config file to use for migration. See README for valid options.')
     .option('--cleanUpTags', 'Providing this option will remove the deprecated workflow tag from the entries after migration.')
     .option('--noDryRun', 'If this flag is provided, actual write action will be executed.')
-    .option('--debounce <milliseconds>', 'Milliseconds to wait between processing each entry to prevent rate limiting.', SLEEP_MS)
+    .option('--debounce <milliseconds>', 'Milliseconds to wait between processing each entry to prevent rate limiting.', DEFAULT_BOUNCE_MS)
     .version('1.0.0');
 
 program.parse();
@@ -34,6 +31,9 @@ const dryRun = !(noDryRun ?? false);
 //--------------- Script Start ------------------
 if (dryRun) {
     warning('Executing script in dry run mode. Provide a "--noDryRun" flag to perform migration.')
+    log()
+} else {
+    error('WARNING: write mode enabled. All migrations will be executed.')
     log()
 }
 
@@ -146,22 +146,24 @@ if (!allTags?.items) {
 
 // ------------------------- MIGRATION BELOW
 const oldWorkflowTags = tagsToMigrate ?? [];
-const tagIdToNameMap = allTags.items.reduce((carry, tag) => {
-    carry[tag.sys.id] = tag.name;
+const tagsByIds = allTags.items.reduce((carry, tag) => {
+    carry[tag.sys.id] = tag;
     return carry;
 }, {})
-const tagNameToIdMap = Object.fromEntries(Object.entries(tagIdToNameMap).map(a => a.reverse()))
+
+const tagNameToIdMap = Object.fromEntries(Object.entries(tagsByIds).map(a => [a[1].name, a[0]]))
 
 for (const oldTag of oldWorkflowTags) {
     try {
         let tagId = oldTag
-        if (!tagIdToNameMap[tagId]) {
+        if (!tagsByIds[tagId]) {
             tagId = tagNameToIdMap[oldTag] ?? null
             if (!tagId) {
-                throw new Error(`The tag '${oldTag}' could not be found in the environment`)
+                warning(`${CROSS} The tag '${oldTag}' could not be found in the environment.`)
+                continue;
             }
         }
-        action(`process "${bold(tagIdToNameMap[tagId])}", id: ${tagId}`)
+        action(`process "${bold(tagsByIds[tagId].name)}", id: ${tagId}`)
         log()
 
         const { workflowDefinitionId } = await inquirer.prompt({
@@ -184,9 +186,9 @@ for (const oldTag of oldWorkflowTags) {
         })
         
         info('fetch entries', 4)
-        await processEntriesInBatch({
+        const { canDeleteTag } = await processEntriesInBatch({
             tagId,
-            tagName: tagIdToNameMap[tagId],
+            tagName: tagsByIds[tagId].name,
             stepId: workflowDefinitionStepId,
             workflowDefinition,
             cmaClient,
@@ -197,7 +199,10 @@ for (const oldTag of oldWorkflowTags) {
             }
         })
 
-        // ToDo: shouldCleanUpTags -> remove tag from environment
+        if (canDeleteTag) {
+            await inquireDeleteTag({ cmaClient, tagId, tagsByIds, indent: 4})
+        }
+
         success('migration completed', 2)
     } catch (e) {
         console.log(e)
