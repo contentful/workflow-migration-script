@@ -19,4 +19,4 @@ export const logBox = (s) => console.log(boxen(s, { padding: 0.5, margin: { top:
 
 export const bold = (message) => chalk.bold(message)
 
-export const sleep = (milliseconds) => new Promise(r => setTimeout(r, milliseconds));
+export const sleep = (milliseconds) => new Promise(r => setTimeout(r, parseInt(milliseconds, 10)));
