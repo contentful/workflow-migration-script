@@ -25,11 +25,18 @@ The following options can be used with the script:
   --debounce <milliseconds>       optional      Milliseconds to wait between processing each entry to prevent rate limiting. (default: 250)
 ```
 
+### Important info
+1. in order to migrate entries from workflow v1 to the new workflow feature, the new workflow v2 configuration must exists beforehand. This can be done via installing the Workflow App.
+
+2. The script executes in a dry-run mode. This means: no data is actually written. Please test the migration in this mode first, when you are sure to write data you need to add the `--noDryRun` flag on script execution.
+
+3. The new workflow configuration must be configured for the same content type(s) as the entries that you want to migrate.
+
 ### Config
 Please provide a Json config file with the following information:
 ```
 {
-    accessToken: string,
+    cmaToken: string,
     spaceId: string,
     environmentId: string,
     tags?: string[]

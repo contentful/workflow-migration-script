@@ -1,5 +1,5 @@
 {
-    "accessToken": "<your-token>",
+    "cmaToken": "<your-token>",
     "spaceId": "<id of the space>",
     "environmentId": "<id of the environment>",
     "tags": ["<tag 1 id>", "<tag 2 id>"]

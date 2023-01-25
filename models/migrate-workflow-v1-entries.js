@@ -11,6 +11,8 @@ import {
   sleep,
 } from "../libs/cli-utils.js";
 import { ALPHA_HEADERS } from "../constants.js";
+import ProgressBar from "progress";
+ 
 
 /**
  * Mirgate entries from deprecated workflow to new workflow feature
@@ -29,6 +31,7 @@ export async function processEntriesInBatch(args) {
     scriptOptions: { dryRun, debounceMs, shouldCleanUpTags },
     cmaClient,
     batchSize,
+    progressBar
   } = args;
 
   totalItemsProcessed = totalItemsProcessed ?? 0;
@@ -83,6 +86,7 @@ export async function processEntriesInBatch(args) {
     }
 
     totalItems = entries.total;
+    progressBar = new ProgressBar(':bar :percent', { total: totalItems });
   }
 
   for (const entry of entries.items) {
@@ -124,7 +128,7 @@ export async function processEntriesInBatch(args) {
           },
           ALPHA_HEADERS
         );
-        success(`${entry.sys.id} - workflow created`, 6);
+        !progressBar && success(`${entry.sys.id} - workflow created`, 6);
       } catch (e) {
         if (e.message.includes("an active workflow already exists")) {
           warning(
@@ -166,7 +170,7 @@ export async function processEntriesInBatch(args) {
             ["X-Contentful-Version"]: currentEntry.sys.version,
           }
         );
-        success(`${entry.sys.id} - tag removed`, 6);
+       !progressBar && success(`${entry.sys.id} - tag removed`, 6);
       } catch (e) {
         error(
           `${CROSS}${entry.sys.id} - could not remove tag from entry. Reason ${
@@ -177,6 +181,8 @@ export async function processEntriesInBatch(args) {
         continue;
       }
     }
+
+    progressBar && progressBar.tick()
   }
 
   if (totalItems > totalItemsProcessed) {
@@ -185,6 +191,7 @@ export async function processEntriesInBatch(args) {
       shouldRemoveTagsFromEntries,
       totalItems,
       totalItemsProcessed,
+      progressBar
     });
   }
 

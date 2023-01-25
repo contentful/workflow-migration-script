@@ -79,7 +79,7 @@ let config = readJsonFileSync(resolveToAbsolutePath(configFilePath), (e) => {
   process.exit(1);
 });
 
-const expectedConfig = ["accessToken", "spaceId", "environmentId"];
+const expectedConfig = ["cmaToken", "spaceId", "environmentId"];
 const givenConfig = Object.keys(config);
 const notDefinedConfig = expectedConfig.filter(
   (key) => !givenConfig.includes(key)
@@ -96,11 +96,11 @@ if (notDefinedConfig.length > 0) {
 success("Config loaded", 2);
 log();
 
-const { spaceId, environmentId, accessToken, tags: tagsFromConfig } = config;
+const { spaceId, environmentId, cmaToken, tags: tagsFromConfig } = config;
 
 action("creating contentful cmaClient");
 const cmaClient = createClient(
-  { accessToken },
+  { accessToken: cmaToken },
   {
     type: "plain",
     alphaFeatures: ["workflows"],
