@@ -6,6 +6,7 @@ import cfManagement from "contentful-management";
 import inquirer from "inquirer";
 import { processEntriesInBatch } from "./models/migrate-workflow-v1-entries.js";
 import { inquireDeleteTag } from "./models/delete-tag.js";
+import { getWorkflowAppInstallation, inquireRemoveTagFromConfiguration } from "./models/workflow-app.js";
 import {
   logBox,
   warning,
@@ -142,9 +143,7 @@ if (tagsFromConfig) {
 if (!tagsFromConfig) {
   action("loading workflows v1 configured tags");
   try {
-    const { parameters } = await cmaClient.appInstallation.get({
-      appDefinitionId: "6RKxbgPghdY4llDpwCFvgR",
-    });
+    const { parameters } = getWorkflowAppInstallation(cmaClient)
     if (!parameters?.workflowDefinitions?.workflow?.states) {
       throw new Error("No workflow v1 configured for environment.");
     }
@@ -290,6 +289,14 @@ for (const oldTag of oldWorkflowTags) {
         shouldCleanUpTags,
       },
     });
+
+    await inquireRemoveTagFromConfiguration({
+      cmaClient,
+      tagId,
+      tagsByIds,
+      indent: 4,
+      dryRun,
+    })
 
     if (canDeleteTag) {
       await inquireDeleteTag({
