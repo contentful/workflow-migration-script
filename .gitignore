@@ -107,3 +107,5 @@ test.config.json
 test2.config.json
 
 generate-content.js
+
+.DS_Store
