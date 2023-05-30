@@ -37,9 +37,11 @@ export async function processEntriesInBatch(args) {
   totalItemsProcessed = totalItemsProcessed ?? 0;
 
   const entries = await cmaClient.entry.getMany({
-    query: { "metadata.tags.sys.id[in]": tagId },
-    limit: batchSize ?? 100,
-    skip: totalItemsProcessed,
+    query: {
+      "metadata.tags.sys.id[in]": tagId,
+      limit: batchSize ?? 100,
+      skip: totalItemsProcessed
+    }
   });
   if (entries.items.length === 0) {
     info(`No entries found.`, 6);
@@ -91,8 +93,17 @@ export async function processEntriesInBatch(args) {
 
   for (const entry of entries.items) {
     await sleep(debounceMs);
-
     ++totalItemsProcessed;
+
+    // if archived skip
+    if (!!entry.sys.archivedVersion) {
+      console.log(`      ${entry.sys.id} is archived, skipping`)
+      continue
+    }
+    let wasPublished = !!entry.sys.publishedVersion &&
+        entry.sys.version === entry.sys.publishedVersion + 1
+
+
     if (
       !workflowDefinition.enabledContentTypes.includes(
         entry.sys.contentType.sys.id
@@ -181,6 +192,14 @@ export async function processEntriesInBatch(args) {
         continue;
       }
     }
+
+    /*
+    if (wasPublished) {
+      console.log(`      ${entry.sys.id} entry was published, should republish`)
+      const new_entry = await cmaClient.entry.get({entryId: entry.sys.id})
+      await cmaClient.entry.publish({entryId: entry.sys.id}, new_entry)
+    }
+     */
 
     progressBar && progressBar.tick()
   }
