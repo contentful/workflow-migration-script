@@ -34,7 +34,7 @@ Contentful will be discontinuing the legacy Workflows version in favour of a new
  1. Download or clone the repository to a local folder
  2. In order for the script to be run correctly, please run in the root project folder:
 ```
-npm install
+npm install .
 ```
 
 ## Usage
