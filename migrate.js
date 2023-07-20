@@ -143,7 +143,7 @@ if (tagsFromConfig) {
 if (!tagsFromConfig) {
   action("loading workflows v1 configured tags");
   try {
-    const { parameters } = getWorkflowAppInstallation(cmaClient)
+    const { parameters } = await getWorkflowAppInstallation(cmaClient)
     if (!parameters?.workflowDefinitions?.workflow?.states) {
       throw new Error("No workflow v1 configured for environment.");
     }
