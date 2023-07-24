@@ -37,9 +37,11 @@ export async function processEntriesInBatch(args) {
   totalItemsProcessed = totalItemsProcessed ?? 0;
 
   const entries = await cmaClient.entry.getMany({
-    query: { "metadata.tags.sys.id[in]": tagId },
-    limit: batchSize ?? 100,
-    skip: totalItemsProcessed,
+    query: {
+      "metadata.tags.sys.id[in]": tagId,
+      limit: batchSize ?? 100,
+      skip: totalItemsProcessed,
+    },
   });
   if (entries.items.length === 0) {
     info(`No entries found.`, 6);
